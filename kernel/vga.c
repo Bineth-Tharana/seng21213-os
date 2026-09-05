@@ -45,6 +45,18 @@ void vga_put_at(int row, int col, char c, vga_color_t fg, vga_color_t bg) {
     vga_write_cell(row, col, c, attr);
 }
 
+/* Public: write a whole string at a fixed position, one vga_put_at()
+ * call per character. Safe for concurrent processes for the same
+ * reason vga_put_at is -- never touches the shared cursor. */
+void vga_puts_at(int row, int col, const char *str, vga_color_t fg, vga_color_t bg) {
+    int c = col;
+    while (*str) {
+        vga_put_at(row, c, *str, fg, bg);
+        str++;
+        c++;
+    }
+}
+
 /* ---------------------------------------------------------------------------
  * Scroll the screen up by one line when the cursor goes past row 24
  * --------------------------------------------------------------------------*/

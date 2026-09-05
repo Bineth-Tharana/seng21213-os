@@ -9,6 +9,7 @@ typedef enum {
     PROC_UNUSED = 0,
     PROC_READY,
     PROC_RUNNING,
+    PROC_BLOCKED,
     PROC_TERMINATED
 } proc_state_t;
 
