@@ -28,13 +28,13 @@ ifneq (, $(shell which i686-elf-gcc 2>/dev/null))
     CC   := i686-elf-gcc
     LD   := i686-elf-ld
     CFLAGS := -m32 -std=gnu99 -ffreestanding -fno-stack-protector -fno-pie -nostdlib \
-              -Wall -Wextra -O2 -I./include
+              -Wall -Wextra -O2 -mno-sse -mno-sse2 -mno-mmx -mgeneral-regs-only -I./include
     LDFLAGS := -m elf_i386 -nostdlib
 else
     CC   := gcc
     LD   := ld
     CFLAGS := -m32 -std=gnu99 -ffreestanding -fno-stack-protector -fno-pie -nostdlib \
-              -Wall -Wextra -O2 -I./include
+              -Wall -Wextra -O2 -mno-sse -mno-sse2 -mno-mmx -mgeneral-regs-only -I./include
     LDFLAGS := -m elf_i386 -nostdlib
 endif
 
@@ -45,11 +45,14 @@ BOOT_SRC  := boot/boot.asm
 BOOT_BIN  := boot/boot.bin
 
 KERNEL_ASM_SRC := kernel/kernel_entry.asm
-KERNEL_ASM_OBJ := build/kernel_entry.o
+KERNEL_ASM_OBJ := build/kernel_entry.o build/switch.o build/isr.o
 
 KERNEL_C_SRCS  := kernel/kernel.c \
                    kernel/vga.c    \
-                   kernel/keyboard.c
+                   kernel/keyboard.c \
+                   kernel/process.c \
+                   kernel/scheduler.c \
+                   kernel/idt.c
 
 # Add your new source files below as the course progresses:
 # Lecture 09: kernel/process.c kernel/scheduler.c
@@ -84,7 +87,17 @@ $(BOOT_BIN): $(BOOT_SRC)
 # ---------------------------------------------------------------------------
 # Kernel: Assembly object
 # ---------------------------------------------------------------------------
-$(KERNEL_ASM_OBJ): $(KERNEL_ASM_SRC)
+build/kernel_entry.o: kernel/kernel_entry.asm
+	@mkdir -p build
+	@echo "  [AS]  $<"
+	$(AS) $(ASFLAGS) $< -o $@
+
+build/switch.o: kernel/switch.asm
+	@mkdir -p build
+	@echo "  [AS]  $<"
+	$(AS) $(ASFLAGS) $< -o $@
+
+build/isr.o: kernel/isr.asm
 	@mkdir -p build
 	@echo "  [AS]  $<"
 	$(AS) $(ASFLAGS) $< -o $@

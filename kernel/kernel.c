@@ -24,6 +24,11 @@
 #include "vga.h"
 #include "keyboard.h"
 #include "../include/types.h"
+#include "process.h"
+#include "scheduler.h"
+#include "idt.h"
+
+extern void switch_context(uint32_t *old_esp_store, uint32_t new_esp);
 
 /* ---------------------------------------------------------------------------
  * Forward declarations of shell commands
@@ -36,6 +41,9 @@ static void cmd_mem(void);
 static void cmd_version(void);
 static void cmd_colour(const char *args);
 static void cmd_halt(void);
+static void cmd_ps(void);
+static void demo_proc_a(void);
+static void demo_proc_b(void);
 
 /* ---------------------------------------------------------------------------
  * Utility: minimal string helpers (no libc in a freestanding kernel!)
@@ -201,6 +209,48 @@ static void cmd_halt(void) {
     }
 }
 
+static void put_uint(uint32_t n) {
+    char buf[11];
+    int i = 10;
+    buf[i--] = '\0';
+    if (n == 0) buf[i--] = '0';
+    while (n > 0) { buf[i--] = '0' + (n % 10); n /= 10; }
+    vga_puts(&buf[i + 1]);
+}
+
+static void cmd_ps(void) {
+    vga_puts_color("\n  PID  STATE      NAME\n", VGA_YELLOW, VGA_BLACK);
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        pcb_t *p = process_table_entry(i);
+        if (!p || p->state == PROC_UNUSED) continue;
+        const char *state_str =
+            p->state == PROC_READY   ? "READY   " :
+            p->state == PROC_RUNNING ? "RUNNING " : "TERM    ";
+        vga_puts("  ");
+        put_uint(p->pid);
+        vga_puts("    ");
+        vga_puts(state_str);
+        vga_puts(" ");
+        vga_puts(p->name);
+        vga_puts("\n");
+    }
+    vga_puts("\n");
+}
+
+static void demo_proc_a(void) {
+    while (true) {
+        vga_put_at(24, 0, 'A', VGA_LIGHT_RED, VGA_BLACK);
+        for (volatile int i = 0; i < 800000; i++);
+    }
+}
+
+static void demo_proc_b(void) {
+    while (true) {
+        vga_put_at(24, 2, 'B', VGA_LIGHT_CYAN, VGA_BLACK);
+        for (volatile int i = 0; i < 2000000; i++);
+    }
+}
+
 /* ---------------------------------------------------------------------------
  * Shell process
  * --------------------------------------------------------------------------*/
@@ -227,6 +277,7 @@ static void shell_run(void) {
         if (k_strcmp(cmd, "version") == 0) { cmd_version(); continue; }
         if (k_strcmp(cmd, "halt")    == 0) { cmd_halt();    continue; }
         if (k_strncmp(cmd, "colour ", 7) == 0) { cmd_colour(k_ltrim(cmd + 7)); continue; }
+        if (k_strcmp(cmd, "ps") == 0) { cmd_ps(); continue; }
 
         if (k_strncmp(cmd, "echo ", 5) == 0) {
             cmd_echo(k_ltrim(cmd + 5));
@@ -259,8 +310,20 @@ void kernel_main(void) {
     vga_init();
     kb_init();
     print_splash();
-    shell_run();
 
-    /* Should never reach here */
+    process_init();
+    scheduler_init();
+
+    scheduler_add(create_process(shell_run,   "shell"));
+    scheduler_add(create_process(demo_proc_a, "proc_a"));
+    scheduler_add(create_process(demo_proc_b, "proc_b"));
+
+    idt_init();
+
+    pcb_t *first = scheduler_bootstrap();
+    uint32_t dummy_esp;
+    switch_context(&dummy_esp, first->esp);
+
+    /* Never reached */
     __asm__ __volatile__("hlt");
 }

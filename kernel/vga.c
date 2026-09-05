@@ -36,6 +36,15 @@ static inline void vga_write_cell(int row, int col, char c, uint8_t attr) {
     *cell = (uint16_t)((attr << 8) | (uint8_t)c);
 }
 
+/* Public: write a single character at a fixed position WITHOUT touching
+ * the shared cursor_row/cursor_col globals or the hardware cursor.
+ * Safe to call from multiple concurrent processes without interfering
+ * with the shell's own text output. */
+void vga_put_at(int row, int col, char c, vga_color_t fg, vga_color_t bg) {
+    uint8_t attr = (uint8_t)((bg << 4) | (fg & 0x0F));
+    vga_write_cell(row, col, c, attr);
+}
+
 /* ---------------------------------------------------------------------------
  * Scroll the screen up by one line when the cursor goes past row 24
  * --------------------------------------------------------------------------*/
