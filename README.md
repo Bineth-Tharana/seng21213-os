@@ -1,10 +1,10 @@
 # SENG21213-OS — Bineth Tharana
 
-> **Course**: SENG 21213 – Computer Architecture & Operating Systems
+> **Course**: SENG 21213 - Computer Architecture & Operating Systems
 > **Year**: 2nd Year, Software Engineering
 > **Assignment**: Build your own x86 Operating System
 
-**Stages completed: Stage 0, Stage 1, Stage 2, Stage 3**
+**All 5 stages complete.**
 
 | Lecture | Milestone | Status | Tag |
 |---------|-----------|--------|-----|
@@ -12,37 +12,17 @@
 | L09 | Stage 1 - Process Management & Scheduler | Complete | `v0.2-stage1` |
 | L10 | Stage 2 - Threads & Synchronisation | Complete | `v0.3-stage2` |
 | L11 | Stage 3 - Memory Management | Complete | `v0.4-stage3` |
-| L12 | Stage 4 - File System | Not started | - |
+| L12 | Stage 4 - File System | Complete | `v0.5-stage4` |
 
 ---
 
 ## Project Structure
 
 seng21213-os/
-├── boot/
-│ └── boot.asm MBR bootloader: real-mode setup, E820 memory
-│ detection, GDT + protected-mode switch
-├── kernel/
-│ ├── kernel_entry.asm Protected-mode entry point, calls kernel_main()
-│ ├── kernel.c Shell loop, command dispatch, all demo processes
-│ ├── vga.c / vga.h VGA 80x25 text driver (incl. vga_put_at/vga_puts_at
-│ │ for cursor-independent concurrent writes)
-│ ├── keyboard.c / .h PS/2 keyboard polling driver
-│ ├── process.c / .h pcb_t process table, create_process()
-│ ├── scheduler.c / .h Round-robin scheduler, scheduler_tick()
-│ ├── idt.c / .h IDT, 8259 PIC remap, PIT (100Hz), irq0_handler()
-│ ├── switch.asm switch_context() - PUSHAD/POPAD + RET
-│ ├── isr.asm irq0_stub - raw IRQ0 entry point
-│ ├── io.h inb/outb port I/O helpers
-│ ├── thread.c / .h thread_create()/thread_yield()
-│ ├── mutex.c / .h Blocking mutex (test-and-set + block/wake)
-│ ├── semaphore.c / .h Counting semaphore
-│ └── pmm.c / .h Bitmap physical frame allocator
-├── include/
-│ └── types.h Primitive types (no libc)
-├── linker.ld Linker script (kernel at 0x10000)
-├── Makefile Build system
-└── README.md You are here
+|-- boot/
+| -- boot.asm MBR bootloader: real-mode setup, E820 memory | detection, GDT + protected-mode switch |-- kernel/ | |-- kernel_entry.asm Protected-mode entry point, calls kernel_main() | |-- kernel.c Shell loop, command dispatch, all demo processes | |-- vga.c / vga.h VGA 80x25 text driver (incl. vga_put_at/vga_puts_at | | for cursor-independent concurrent writes) | |-- keyboard.c / .h PS/2 keyboard polling driver | |-- process.c / .h pcb_t process table, create_process() | |-- scheduler.c / .h Round-robin scheduler, scheduler_tick() | |-- idt.c / .h IDT, 8259 PIC remap, PIT (100Hz), irq0_handler() | |-- switch.asm switch_context() - PUSHAD/POPAD + RET | |-- isr.asm irq0_stub - raw IRQ0 entry point | |-- io.h inb/outb port I/O helpers | |-- thread.c / .h thread_create()/thread_yield() | |-- mutex.c / .h Blocking mutex (test-and-set + block/wake) | |-- semaphore.c / .h Counting semaphore | |-- pmm.c / .h Bitmap physical frame allocator | |-- ramdisk.c / .h 64KB RAM disk, 512-byte blocks | -- fs.c / .h Inode-based flat file system
+|-- include/
+| -- types.h Primitive types (no libc) |-- linker.ld Linker script (kernel at 0x10000) |-- Makefile Build system -- README.md You are here
 
 
 ---
@@ -82,7 +62,7 @@ kernel/kernel_entry.asm (Protected Mode, 32-bit)
 | Calls kernel_main()
 v
 kernel/kernel.c -> kernel_main()
-| vga_init(), kb_init(), pmm_init()
+| vga_init(), kb_init(), pmm_init(), fs_init()
 | process_init(), scheduler_init()
 | creates shell + demo processes, calls scheduler_add() for each
 | idt_init() - IDT, PIC remap, PIT programmed for 100Hz
@@ -188,6 +168,62 @@ boot sector, the E820 buffer itself, and the loaded kernel image).
 Used 1MB (256 frames, the reserved first-1MB region), Free 30MB
 (7904 frames). `pmmtest` reports PASS.
 
+## Stage 4: RAM Disk File System
+
+**API:**
+```c
+#define MAX_INODES     8
+#define MAX_FILES      8
+#define DIRECT_BLOCKS  8
+#define MAX_NAME       28
+#define MAX_FILE_SIZE  (DIRECT_BLOCKS * BLOCK_SIZE)   /* 8 * 512 = 4KB */
+
+typedef struct {
+    uint32_t used;
+    uint32_t size;
+    uint32_t direct[DIRECT_BLOCKS];
+} inode_t;
+
+typedef struct {
+    char     name[MAX_NAME];
+    uint32_t inode;
+    uint32_t used;
+} dirent_t;
+
+void fs_init(void);
+int  fs_create(const char *name);
+int  fs_open(const char *name);
+int  fs_read(int fd, void *buf, uint32_t max_len);
+int  fs_write(int fd, const void *data, uint32_t len);
+int  fs_unlink(const char *name);
+int  fs_list(dirent_t *out, int max);
+uint32_t fs_size_of(int inode_index);
+```
+
+`ramdisk.c` is a 64KB static byte array in BSS, split into 128 blocks of
+512 bytes each, standing in for a real block device (`ramdisk_read`/
+`ramdisk_write`). `fs.c` implements a flat inode-based filesystem on top
+of it: block 0 holds the directory (8 `dirent_t` entries), blocks 1-2
+hold the inode table (8 `inode_t` entries, each with 8 direct block
+pointers giving a 4KB max file size), and block 3 onward is free for
+file data. Block/inode allocation is tracked with small in-memory
+"used" arrays, and the directory + inode table are persisted back to
+the ramdisk after every mutating operation.
+
+**Shell commands:**
+- `ls` -- lists all files with their current size in bytes
+- `touch <name>` -- creates an empty file
+- `cat <name>` -- prints a file's contents
+- `write <name> <text>` -- appends text to a file (creates it if needed)
+- `rm <name>` -- deletes a file, freeing its inode and data blocks
+
+**Verified test sequence (exact assignment requirement):** created 5
+files (a.txt through e.txt) via `touch`, confirmed all at 0 bytes via
+`ls`; wrote "Hello"/"World"/"Testing" to a.txt/b.txt/c.txt and confirmed
+correct sizes (5/5/7 bytes) via `ls`; read back exact content via `cat`
+for all three; deleted c.txt via `rm` and confirmed via a final `ls`
+that only 4 files remained with their sizes intact.
+
 ---
 
 ## Debugging Notes
@@ -236,6 +272,21 @@ Used 1MB (256 frames, the reserved first-1MB region), Free 30MB
    in full; only the cosmetic status string was cut) to fit back under
    the 512-byte ceiling.
 
+**Stage 4:**
+
+6. *Stack buffer overflow in `fs.c`'s `persist()` function.* The very
+   first version used `MAX_FILES = MAX_INODES = 16`. `sizeof(dirent_t[16])`
+   works out to 16 * 36 = 576 bytes, but `persist()` copied the whole
+   directory array into a 512-byte (`BLOCK_SIZE`) stack buffer via
+   `fs_memcpy`, overflowing the buffer by 64 bytes on every call --
+   including the very first call inside `fs_init()`, causing an
+   immediate triple fault before `idt_init()` even ran (confirmed via
+   the same `EIP` near-null crash signature as bug #2, plus checking
+   `size build/kernel.elf` to rule out a simpler BSS-budget explanation
+   first). Fixed by reducing `MAX_INODES`/`MAX_FILES` to 8, so both the
+   directory (8*36=288 bytes) and the inode table (8*40=320 bytes) fit
+   safely within a single 512-byte block each.
+
 ---
 
 ## Known Limitations
@@ -251,6 +302,11 @@ entries each. No priority inheritance.
 **Stage 3:** Bitmap sized for up to 64MB of RAM (`PMM_MAX_FRAMES`). E820
 map capped at 32 entries. No virtual memory / paging yet -- purely
 physical frame allocation.
+
+**Stage 4:** Flat directory only (no subdirectories). Max 8 files, max
+4KB per file (8 direct blocks, no indirect block pointers). 64KB total
+ramdisk capacity. No fragmentation handling beyond a simple linear
+free-block scan.
 
 ---
 
@@ -278,6 +334,8 @@ tail -60 qemu_debug.log
 
 Look for the `v=XX` exception vector right before "Triple fault" --
 e.g. `v=0d` is a General Protection Fault, `v=08` is a Double Fault.
+Also useful: `size build/kernel.elf` to check text/data/bss sizes when
+suspecting a memory-layout issue rather than a register/interrupt one.
 
 ---
 
