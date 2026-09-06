@@ -31,6 +31,8 @@
 #include "semaphore.h"
 #include "thread.h"
 #include "pmm.h"
+#include "ramdisk.h"
+#include "fs.h"
 
 extern void switch_context(uint32_t *old_esp_store, uint32_t new_esp);
 
@@ -56,6 +58,11 @@ static void producer_fn(void *arg);
 static void consumer_fn(void *arg);
 static void cmd_meminfo(void);
 static void cmd_pmmtest(void);
+static void cmd_ls(void);
+static void cmd_touch(const char *args);
+static void cmd_cat(const char *args);
+static void cmd_write(const char *args);
+static void cmd_rm(const char *args);
 
 /* ---------------------------------------------------------------------------
  * Utility: minimal string helpers (no libc in a freestanding kernel!)
@@ -419,6 +426,97 @@ static void cmd_pmmtest(void) {
 }
 
 /* ---------------------------------------------------------------------------
+ * Stage 4: RAM disk file system commands
+ * --------------------------------------------------------------------------*/
+static void cmd_ls(void) {
+    dirent_t entries[MAX_FILES];
+    int n = fs_list(entries, MAX_FILES);
+
+    if (n == 0) {
+        vga_puts("\n  (no files)\n\n");
+        return;
+    }
+
+    vga_puts_color("\n  NAME                         SIZE\n", VGA_YELLOW, VGA_BLACK);
+    for (int i = 0; i < n; i++) {
+        vga_puts("  ");
+        vga_puts(entries[i].name);
+        vga_puts("  ");
+        put_uint(fs_size_of((int)entries[i].inode));
+        vga_puts(" bytes\n");
+    }
+    vga_puts("\n");
+}
+
+static void cmd_touch(const char *args) {
+    if (k_strlen(args) == 0) {
+        vga_puts_color("  Usage: touch <name>\n", VGA_YELLOW, VGA_BLACK);
+        return;
+    }
+    if (fs_create(args) < 0) {
+        vga_puts_color("  touch: failed (file exists, or out of inodes)\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+    }
+}
+
+static void cmd_cat(const char *args) {
+    if (k_strlen(args) == 0) {
+        vga_puts_color("  Usage: cat <name>\n", VGA_YELLOW, VGA_BLACK);
+        return;
+    }
+    int fd = fs_open(args);
+    if (fd < 0) {
+        vga_puts_color("  cat: no such file\n", VGA_LIGHT_RED, VGA_BLACK);
+        return;
+    }
+    char buf[513];
+    int n = fs_read(fd, buf, sizeof(buf) - 1);
+    if (n < 0) n = 0;
+    buf[n] = '\0';
+    vga_puts("  ");
+    vga_puts(buf);
+    vga_puts("\n");
+}
+
+/* "write <name> <text>" - args here is everything after "write ",
+ * so we split on the first space ourselves. */
+static void cmd_write(const char *args) {
+    const char *p = args;
+    char name[MAX_NAME];
+    int i = 0;
+    while (*p && *p != ' ' && i < MAX_NAME - 1) name[i++] = *p++;
+    name[i] = '\0';
+
+    if (i == 0 || *p != ' ') {
+        vga_puts_color("  Usage: write <name> <text>\n", VGA_YELLOW, VGA_BLACK);
+        return;
+    }
+    p++; /* skip the space */
+
+    int fd = fs_open(name);
+    if (fd < 0) fd = fs_create(name);
+    if (fd < 0) {
+        vga_puts_color("  write: failed to create file\n", VGA_LIGHT_RED, VGA_BLACK);
+        return;
+    }
+
+    int written = fs_write(fd, p, k_strlen(p));
+    if (written < 0) {
+        vga_puts_color("  write: failed (file full?)\n", VGA_LIGHT_RED, VGA_BLACK);
+    }
+}
+
+static void cmd_rm(const char *args) {
+    if (k_strlen(args) == 0) {
+        vga_puts_color("  Usage: rm <name>\n", VGA_YELLOW, VGA_BLACK);
+        return;
+    }
+    if (fs_unlink(args) < 0) {
+        vga_puts_color("  rm: no such file\n", VGA_LIGHT_RED, VGA_BLACK);
+    }
+}
+
+/* ---------------------------------------------------------------------------
  * Shell process
  * --------------------------------------------------------------------------*/
 static char  shell_buf[256];
@@ -449,6 +547,11 @@ static void shell_run(void) {
         if (k_strcmp(cmd, "pc")   == 0) { cmd_pc();   continue; }
         if (k_strcmp(cmd, "meminfo") == 0) { cmd_meminfo(); continue; }
         if (k_strcmp(cmd, "pmmtest") == 0) { cmd_pmmtest(); continue; }
+        if (k_strcmp(cmd, "ls") == 0) { cmd_ls(); continue; }
+        if (k_strncmp(cmd, "touch ", 6) == 0) { cmd_touch(k_ltrim(cmd + 6)); continue; }
+        if (k_strncmp(cmd, "cat ", 4) == 0) { cmd_cat(k_ltrim(cmd + 4)); continue; }
+        if (k_strncmp(cmd, "write ", 6) == 0) { cmd_write(k_ltrim(cmd + 6)); continue; }
+        if (k_strncmp(cmd, "rm ", 3) == 0) { cmd_rm(k_ltrim(cmd + 3)); continue; }
 
         if (k_strncmp(cmd, "echo ", 5) == 0) {
             cmd_echo(k_ltrim(cmd + 5));
@@ -481,6 +584,7 @@ void kernel_main(void) {
     vga_init();
     kb_init();
     pmm_init();
+    fs_init();
     print_splash();
 
     process_init();
