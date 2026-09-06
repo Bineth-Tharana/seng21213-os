@@ -30,6 +30,7 @@
 #include "mutex.h"
 #include "semaphore.h"
 #include "thread.h"
+#include "pmm.h"
 
 extern void switch_context(uint32_t *old_esp_store, uint32_t new_esp);
 
@@ -53,6 +54,8 @@ static void racer_unsafe(void *arg);
 static void racer_safe(void *arg);
 static void producer_fn(void *arg);
 static void consumer_fn(void *arg);
+static void cmd_meminfo(void);
+static void cmd_pmmtest(void);
 
 /* ---------------------------------------------------------------------------
  * Utility: minimal string helpers (no libc in a freestanding kernel!)
@@ -377,6 +380,45 @@ static void cmd_pc(void) {
 }
 
 /* ---------------------------------------------------------------------------
+ * Stage 3: physical memory manager commands
+ * --------------------------------------------------------------------------*/
+static void cmd_meminfo(void) {
+    uint32_t total = pmm_total_frames();
+    uint32_t used  = pmm_used_frames();
+    uint32_t free  = pmm_free_frames();
+
+    vga_puts_color("\n  Physical Memory (4KB frames)\n", VGA_YELLOW, VGA_BLACK);
+    vga_puts("  Total: ");
+    put_uint((total * 4) / 1024);
+    vga_puts(" MB  (");
+    put_uint(total);
+    vga_puts(" frames)\n");
+
+    vga_puts("  Used:  ");
+    put_uint((used * 4) / 1024);
+    vga_puts(" MB  (");
+    put_uint(used);
+    vga_puts(" frames)\n");
+
+    vga_puts("  Free:  ");
+    put_uint((free * 4) / 1024);
+    vga_puts(" MB  (");
+    put_uint(free);
+    vga_puts(" frames)\n\n");
+}
+
+static void cmd_pmmtest(void) {
+    vga_puts_color("\n  Running PMM selftest (alloc + free 100 frames)...\n",
+                   VGA_YELLOW, VGA_BLACK);
+    if (pmm_selftest()) {
+        vga_puts_color("  PASS - no frames leaked.\n\n", VGA_LIGHT_GREEN, VGA_BLACK);
+    } else {
+        vga_puts_color("  FAIL - frame count mismatch or allocation failed.\n\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+    }
+}
+
+/* ---------------------------------------------------------------------------
  * Shell process
  * --------------------------------------------------------------------------*/
 static char  shell_buf[256];
@@ -405,6 +447,8 @@ static void shell_run(void) {
         if (k_strcmp(cmd, "ps") == 0) { cmd_ps(); continue; }
         if (k_strcmp(cmd, "race") == 0) { cmd_race(); continue; }
         if (k_strcmp(cmd, "pc")   == 0) { cmd_pc();   continue; }
+        if (k_strcmp(cmd, "meminfo") == 0) { cmd_meminfo(); continue; }
+        if (k_strcmp(cmd, "pmmtest") == 0) { cmd_pmmtest(); continue; }
 
         if (k_strncmp(cmd, "echo ", 5) == 0) {
             cmd_echo(k_ltrim(cmd + 5));
@@ -436,6 +480,7 @@ static void shell_run(void) {
 void kernel_main(void) {
     vga_init();
     kb_init();
+    pmm_init();
     print_splash();
 
     process_init();

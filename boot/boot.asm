@@ -52,6 +52,36 @@ load_kernel:
     call print_rm
 
 ; ---------------------------------------------------------------------------
+; L11 - Detect available physical memory via BIOS int 0x15, EAX=0xE820
+; Must run in Real Mode, before switching to Protected Mode. Raw 24-byte
+; entries stored at physical 0x9000; entry count stored as a word at
+; physical 0x8FF0. Read back by kernel/pmm.c in protected mode.
+; ---------------------------------------------------------------------------
+detect_memory:
+    xor  ax, ax
+    mov  es, ax            ; ES must be 0 - disk load left it at 0x1000
+    mov  di, 0x9000
+    xor  ebx, ebx           ; continuation value, 0 to start
+    xor  bp, bp             ; entry count
+
+.e820_loop:
+    mov  eax, 0xE820
+    mov  edx, 0x534D4150    ; 'SMAP'
+    mov  ecx, 24            ; ask for 24-byte entries
+    int  0x15
+    jc   .e820_done         ; carry set = unsupported or finished
+    cmp  eax, 0x534D4150
+    jne  .e820_done
+    cmp  bp, 32
+    jae  .e820_done         ; cap at 32 entries (matches PMM_MAX_E820_ENTRIES)
+    add  di, 24
+    inc  bp
+    test ebx, ebx
+    jnz  .e820_loop         ; ebx=0 means that was the last entry
+.e820_done:
+    mov  [0x8FF0], bp
+
+; ---------------------------------------------------------------------------
 ; Enter Protected Mode
 ; ---------------------------------------------------------------------------
 enter_pm:
